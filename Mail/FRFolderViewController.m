@@ -184,6 +184,8 @@ forRowAtIndexPath:(NSIndexPath *)indexPath {
     NSFetchRequest *fetchRequest = [[NSFetchRequest alloc] init];
     [fetchRequest setPredicate:
      [NSPredicate predicateWithFormat:@"folder = %@", self.folder]];
+    [fetchRequest setRelationshipKeyPathsForPrefetching:
+     [NSArray arrayWithObjects:@"sender", nil]];
     [fetchRequest setEntity:entity];
     [fetchRequest setFetchBatchSize:20];
     [fetchRequest setSortDescriptors:
