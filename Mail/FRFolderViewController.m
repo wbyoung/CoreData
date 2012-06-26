@@ -90,23 +90,76 @@
         isSearching = TRUE;
         [controller.searchResultsTableView reloadData];
     }
-
+    
+    NSMutableSet *inserted = [NSMutableSet set];
+    NSMutableSet *updated = [NSMutableSet set];
+    NSMutableSet *deleted = [NSMutableSet set];
+    
+    NSSet *(^toObjectIDs)(NSSet *objects) = ^NSSet *(NSSet *objects) {
+        NSMutableSet *result = [NSMutableSet set];
+        for (NSManagedObject *object in objects) {
+            [result addObject:[object objectID]];
+        }
+        return result;
+    };
+    
+    [inserted unionSet:toObjectIDs([fgContext insertedObjects])];
+    [updated unionSet:toObjectIDs([fgContext updatedObjects])];
+    [deleted unionSet:toObjectIDs([fgContext deletedObjects])];
+    
+    void (^observationBlock)(NSNotification *) = ^(NSNotification *note) {
+        NSDictionary *userInfo = [note userInfo];
+        [inserted unionSet:toObjectIDs([userInfo objectForKey:NSInsertedObjectsKey])];
+        [updated unionSet:toObjectIDs([userInfo objectForKey:NSUpdatedObjectsKey])];
+        [deleted unionSet:toObjectIDs([userInfo objectForKey:NSDeletedObjectsKey])];
+    };
+    NSNotificationCenter *noteCenter = [NSNotificationCenter defaultCenter];
+    NSString *observe = NSManagedObjectContextObjectsDidChangeNotification;
+    id observer = [noteCenter addObserverForName:observe
+                                          object:fgContext
+                                           queue:nil
+                                      usingBlock:observationBlock];
+    
     NSUInteger currentSearchRequest = ++searchRequestNumber;
     NSManagedObjectContext *bkgdContext =
         [[NSManagedObjectContext alloc] initWithConcurrencyType:NSPrivateQueueConcurrencyType];
-    [bkgdContext setParentContext:self.folder.managedObjectContext];
+    [bkgdContext setPersistentStoreCoordinator:fgContext.persistentStoreCoordinator];
     [bkgdContext performBlock:^{
         NSLog(@"searching in background");
         NSArray *results = [bkgdContext executeFetchRequest:fetchRequest error:NULL];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (currentSearchRequest == searchRequestNumber) {
                 NSMutableArray *objects = [NSMutableArray array];
+                // there's no good way to add objects that were created mid-search to our
+                // result without making the main thread hang, so we'll just put them at
+                // the front of the list.
+                for (NSManagedObjectID *objectID in inserted) {
+                    NSManagedObject *object = [fgContext objectWithID:objectID];
+                    if ([[object entity] isKindOfEntity:[fetchRequest entity]] &&
+                        [predicate evaluateWithObject:object]) {
+                        [objects addObject:object];
+                    }
+                }
+                for (NSManagedObjectID *objectID in updated) {
+                    NSManagedObject *object = [fgContext objectWithID:objectID];
+                    if ([[object entity] isKindOfEntity:[fetchRequest entity]] &&
+                        [predicate evaluateWithObject:object]) {
+                        [objects addObject:object];
+                    }
+                }
+                // go through the actual results
                 for (NSManagedObjectID *objectID in results) {
-                    [objects addObject:[fgContext objectWithID:objectID]];
+                    NSManagedObject *object = [fgContext objectWithID:objectID];
+                    if (![deleted containsObject:objectID] && // don't add deleted objects
+                        ![updated containsObject:objectID]) { // updated added previously
+                        [objects addObject:object];
+                    }
                 }
                 searchResults = objects;
                 isSearching = FALSE;
                 [controller.searchResultsTableView reloadData];
+                
+                [noteCenter removeObserver:observer];
             }
         });
     }];
