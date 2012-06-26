@@ -27,6 +27,7 @@
 @interface FRFolderViewController () <NSFetchedResultsControllerDelegate> {
     NSArray *searchResults;
     BOOL isSearching;
+    NSUInteger searchRequestNumber;
 }
 @property (strong, nonatomic) NSFetchedResultsController *fetchedResultsController;
 @end
@@ -49,10 +50,10 @@
 - (void)updateSearchForController:(UISearchDisplayController *)controller {
     
     NSString *searchString = controller.searchBar.text;
-    NSManagedObjectContext *context = self.folder.managedObjectContext;
+    NSManagedObjectContext *fgContext = self.folder.managedObjectContext;
     NSEntityDescription *entity =
         [NSEntityDescription entityForName:@"Message"
-                    inManagedObjectContext:context];
+                    inManagedObjectContext:fgContext];
     NSSortDescriptor *dateSort =
         [NSSortDescriptor sortDescriptorWithKey:@"date" ascending:NO];
     NSPredicate *predicate = nil;
@@ -77,6 +78,7 @@
     
     NSFetchRequest *fetchRequest = [[NSFetchRequest alloc] init];
     [fetchRequest setEntity:entity];
+    [fetchRequest setResultType:NSManagedObjectIDResultType];
     [fetchRequest setPredicate:
      [NSCompoundPredicate andPredicateWithSubpredicates:
       [NSArray arrayWithObjects:
@@ -84,19 +86,42 @@
     [fetchRequest setSortDescriptors:
      [NSArray arrayWithObjects:dateSort, nil]];
 
-    searchResults = [context executeFetchRequest:fetchRequest error:NULL];
+    if (!isSearching) {
+        isSearching = TRUE;
+        [controller.searchResultsTableView reloadData];
+    }
+
+    NSUInteger currentSearchRequest = ++searchRequestNumber;
+    NSManagedObjectContext *bkgdContext =
+        [[NSManagedObjectContext alloc] initWithConcurrencyType:NSPrivateQueueConcurrencyType];
+    [bkgdContext setParentContext:self.folder.managedObjectContext];
+    [bkgdContext performBlock:^{
+        NSLog(@"searching in background");
+        NSArray *results = [bkgdContext executeFetchRequest:fetchRequest error:NULL];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (currentSearchRequest == searchRequestNumber) {
+                NSMutableArray *objects = [NSMutableArray array];
+                for (NSManagedObjectID *objectID in results) {
+                    [objects addObject:[fgContext objectWithID:objectID]];
+                }
+                searchResults = objects;
+                isSearching = FALSE;
+                [controller.searchResultsTableView reloadData];
+            }
+        });
+    }];
 }
 
 - (BOOL)searchDisplayController:(UISearchDisplayController *)controller
 shouldReloadTableForSearchScope:(NSInteger)searchOption {
     [self updateSearchForController:controller];
-    return YES;
+    return NO;
 }
 
 - (BOOL)searchDisplayController:(UISearchDisplayController *)controller
 shouldReloadTableForSearchString:(NSString *)searchString {
     [self updateSearchForController:controller];
-    return YES;
+    return NO;
 }
 
 
