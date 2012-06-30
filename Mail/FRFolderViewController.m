@@ -69,9 +69,9 @@
                      searchString, searchString];
     }
     else if (controller.searchBar.selectedScopeButtonIndex == 2) {
-        predicate = [NSPredicate predicateWithFormat:@"subquery(recipients, $r, "
-                     @"$r.name contains[cd] %@ or "
-                     @"$r.email contains[cd] %@) != 0",
+        predicate = [NSPredicate predicateWithFormat:
+                     @"any recipients.name contains[cd] %@ or "
+                     @"any recipients.email contains[cd] %@",
                      searchString, searchString];
     }
     
